@@ -7,6 +7,7 @@ const stderr_file = std.io.getStdErr().writer();
 const defaultIcon: str = " ";
 const fileIcon: str = "📄";
 const folderIcon: str = "🗀";
+
 fn getFilePath(allocator: std.mem.Allocator) ![*:0]u8 {
     if (std.os.argv.len > 1) {
         return std.os.argv[1];
@@ -16,28 +17,21 @@ fn getFilePath(allocator: std.mem.Allocator) ![*:0]u8 {
         return try allocator.dupeZ(u8, cwd);
     }
 }
-fn displayMask(m: std.fs.File.Mode) str {
-    const masks = [_]str{ "☰", "☴", "☲", "☶", "☱", "☵", "☳", "☷" };
-    if (m < masks.len) {
-        return masks[m];
-    } else {
-        return "not supported";
-    }
-}
-
-fn getPermission(m: std.fs.File.Mode) str {
-    m = m & 0o777;
-    const perms = [_]str{
-        "---", "--x", "-w-", "-wx",
-        "r--", "r-x", "rw-", "rwx",
-    };
-    return perms[m];
-}
 
 fn formatSize(buf: []u8, stat: std.fs.File.Stat) error{NoSpaceLeft}!str {
     return try std.fmt.bufPrint(buf, "{s:.2}", .{std.fmt.fmtIntSizeBin(stat.size)});
 }
 
+fn checkPermissions(file_path: []const u8) !usize {
+    const fs = std.fs;
+    var file = try fs.cwd().openFile(file_path, .{});
+    defer file.close();
+
+    const stat = try file.stat();
+    const mode = stat.mode;
+
+    return mode & 0o777;
+}
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -68,7 +62,7 @@ pub fn main() !void {
     var iterator = dir.iterate();
     var buf: [1024]u8 = undefined;
     var size: str = "";
-    var mask: str = "";
+    var mask: usize = undefined;
     var icon: str = "";
 
     while (try iterator.next()) |it| {
@@ -83,7 +77,10 @@ pub fn main() !void {
                     try stderr.print("fdutil: not enough memory for string conversion: {}\n", .{err});
                     continue;
                 };
-                mask = displayMask(stat.mode);
+                mask = checkPermissions(it.name) catch |err| {
+                    try stderr.print("fdutil: can't get permissions for file '{s}: {}'\n", .{ it.name, err });
+                    continue;
+                };
                 icon = fileIcon;
             },
             std.fs.File.Kind.directory => {
@@ -95,15 +92,15 @@ pub fn main() !void {
                     try stderr.print("fdutil: not enough memory for string conversion: {}\n", .{err});
                     continue;
                 };
-                mask = displayMask(stat.mode);
                 icon = folderIcon;
             },
             else => {
                 size = "";
-                mask = ""; // mask is currently not working
+                mask = 0;
                 icon = defaultIcon;
             },
         }
-        try stdout.print("{s:<1}{s:15} {s} {s}\n", .{ icon, size, it.name, mask });
+
+        try stdout.print("{s:<1}{s:15} {s} {o}\n", .{ icon, size, it.name, mask & 0o777 });
     }
 }
