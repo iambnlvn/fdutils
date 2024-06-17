@@ -5,7 +5,7 @@ const stdout_file = std.io.getStdOut().writer();
 const stderr_file = std.io.getStdErr().writer();
 
 const defaultIcon: str = " ";
-const fileIcon: str = " ";
+const fileIcon: str = "📄";
 const folderIcon: str = "🗀";
 fn getFilePath(allocator: std.mem.Allocator) ![*:0]u8 {
     if (std.os.argv.len > 1) {
@@ -17,17 +17,25 @@ fn getFilePath(allocator: std.mem.Allocator) ![*:0]u8 {
     }
 }
 fn displayMask(m: std.fs.File.Mode) str {
-    switch (m) {
-        0 => return "☰",
-        1 => return "☴",
-        2 => return "☲",
-        3 => return "☶",
-        4 => return "☱",
-        5 => return "☵",
-        6 => return "☳",
-        7 => return "☷",
-        else => return "",
+    const masks = [_]str{ "☰", "☴", "☲", "☶", "☱", "☵", "☳", "☷" };
+    if (m < masks.len) {
+        return masks[m];
+    } else {
+        return "not supported";
     }
+}
+
+fn getPermission(m: std.fs.File.Mode) str {
+    m = m & 0o777;
+    const perms = [_]str{
+        "---", "--x", "-w-", "-wx",
+        "r--", "r-x", "rw-", "rwx",
+    };
+    return perms[m];
+}
+
+fn formatSize(buf: []u8, stat: std.fs.File.Stat) error{NoSpaceLeft}!str {
+    return try std.fmt.bufPrint(buf, "{s:.2}", .{std.fmt.fmtIntSizeBin(stat.size)});
 }
 
 pub fn main() !void {
@@ -45,29 +53,16 @@ pub fn main() !void {
     const fpath: [*:0]u8 = try getFilePath(allocator);
 
     var dir = std.fs.openDirAbsoluteZ(fpath, .{ .iterate = true }) catch |err| {
-        switch (err) {
-            error.NoSpaceLeft => {
-                try stderr.print("fdutil: no space left for '{s}'\n", .{fpath});
-            },
-            error.FileNotFound => {
-                try stderr.print("fdutil: path not found for '{s}'\n", .{fpath});
-            },
-            error.FileTooBig => {
-                try stderr.print("fdutil: file too big for '{s}'\n", .{fpath});
-            },
-            error.AccessDenied => {
-                try stderr.print("fdutil: access denied for '{s}'\n", .{fpath});
-            },
-            error.DeviceBusy => {
-                try stderr.print("fdutil: device busy for '{s}'\n", .{fpath});
-            },
-            error.NameTooLong => {
-                try stderr.print("fdutil: name too long for '{s}'\n", .{fpath});
-            },
-            else => {
-                try stderr.print("fdutil: cannot open '{s}'\n", .{fpath});
-            },
-        }
+        const errMessage = switch (err) {
+            error.NoSpaceLeft => "no space left",
+            error.FileNotFound => "path not found",
+            error.FileTooBig => "file too big",
+            error.AccessDenied => "access denied",
+            error.DeviceBusy => "device busy",
+            error.NameTooLong => "name too long",
+            else => "cannot open",
+        };
+        try stderr.print("fdutil: {s} for '{s}'\n", .{ errMessage, fpath });
         return;
     };
     var iterator = dir.iterate();
@@ -75,6 +70,7 @@ pub fn main() !void {
     var size: str = "";
     var mask: str = "";
     var icon: str = "";
+
     while (try iterator.next()) |it| {
         switch (it.kind) {
             std.fs.File.Kind.file => {
@@ -82,7 +78,8 @@ pub fn main() !void {
                     try stderr.print("fdutil: can't stat file '{s}: {}'\n", .{ it.name, err });
                     continue;
                 };
-                size = std.fmt.bufPrint(&buf, "{s:.2}", .{std.fmt.fmtIntSizeBin(stat.size)}) catch |err| {
+
+                size = formatSize(&buf, stat) catch |err| {
                     try stderr.print("fdutil: not enough memory for string conversion: {}\n", .{err});
                     continue;
                 };
@@ -94,7 +91,7 @@ pub fn main() !void {
                     try stderr.print("fdutil: can't stat file '{s}: {}'\n", .{ it.name, err });
                     continue;
                 };
-                size = std.fmt.bufPrint(&buf, "{s:.2}", .{std.fmt.fmtIntSizeBin(stat.size)}) catch |err| {
+                size = formatSize(&buf, stat) catch |err| {
                     try stderr.print("fdutil: not enough memory for string conversion: {}\n", .{err});
                     continue;
                 };
@@ -103,10 +100,10 @@ pub fn main() !void {
             },
             else => {
                 size = "";
-                mask = "";
+                mask = ""; // mask is currently not working
                 icon = defaultIcon;
             },
         }
-        try stdout.print("{s:<1}{s:15} {s}\n", .{ icon, size, it.name });
+        try stdout.print("{s:<1}{s:15} {s} {s}\n", .{ icon, size, it.name, mask });
     }
 }
