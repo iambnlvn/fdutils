@@ -17,6 +17,11 @@ fn getFilePath(allocator: std.mem.Allocator) ![*:0]u8 {
         return try allocator.dupeZ(u8, cwd);
     }
 }
+const Permissions = struct {
+    read: []const u8,
+    write: []const u8,
+    execute: []const u8,
+};
 
 fn formatSize(buf: []u8, stat: std.fs.File.Stat) error{NoSpaceLeft}!str {
     return try std.fmt.bufPrint(buf, "{s:.2}", .{std.fmt.fmtIntSizeBin(stat.size)});
@@ -32,6 +37,14 @@ fn checkPermissions(file_path: []const u8) !usize {
 
     return mode & 0o777;
 }
+fn filePermissions(mode: usize) Permissions {
+    return Permissions{
+        .read = if (mode & 0o400 != 0) "r" else "-",
+        .write = if (mode & 0o200 != 0) "w" else "-",
+        .execute = if (mode & 0o100 != 0) "x" else "-",
+    };
+}
+
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -100,7 +113,7 @@ pub fn main() !void {
                 icon = defaultIcon;
             },
         }
-
-        try stdout.print("{s:<1}{s:15} {s} {o}\n", .{ icon, size, it.name, mask & 0o777 });
+        const permissions = filePermissions(mask);
+        try stdout.print("{s:<1}{s:15} {s} {s}{s}{s}\n", .{ icon, size, it.name, permissions.read, permissions.write, permissions.execute });
     }
 }
